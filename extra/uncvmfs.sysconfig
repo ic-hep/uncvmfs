@@ -1,0 +1,11 @@
+# Config file for the unCVMFS cron tool
+
+# The path to the main uncvmfs config file
+UNCVMFS_CONF=/etc/uncvmfs/uncvmfs.conf
+
+# A (space seperated list of the repositories to process
+UNCVMFS_REPOS=""
+
+# Any other options
+UNCVMFS_OPTS="-v -n4"
+

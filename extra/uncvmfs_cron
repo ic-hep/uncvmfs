@@ -1,0 +1,21 @@
+#!/bin/bash
+
+UNCVMFS_BIN="/usr/bin/uncvmfs"
+UNCVMFS_REPOS=""
+UNCVMFS_OPTS=""
+# This is created by the cron job
+UNCVMFS_USER="cvmfs"
+
+if [ -f "/etc/sysconfig/uncvmfs" ]; then
+  source /etc/sysconfig/uncvmfs
+fi
+
+UNCVMFS_CONF=${UNCVMFS_CONF:-/etc/uncvmfs/uncvmfs.conf}
+UNCVMFS_LOG=${UNCVMFS_LOG:-/var/log/uncvmfs.log}
+
+for REPO in ${UNCVMFS_REPOS}; do
+  /sbin/runuser -s "/bin/bash" \
+                -c "${UNCVMFS_BIN} ${UNCVMFS_OPTS} ${UNCVMFS_CONF} ${REPO}" \
+                cvmfs 2>&1 | tee -a "${UNCVMFS_LOG}"
+done
+

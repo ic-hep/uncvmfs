@@ -1,0 +1,93 @@
+unCVMFS
+=======
+
+unCVMFS is a tool for unpacking an entire CVMFS repository into a local
+directory in a time efficient manner.
+
+
+Configuration Files
+-------------------
+/etc/uncvmfs.conf - The main configuration file.
+/etc/sysconfig/uncvmfs - Settings for the cron job (uncvmfs_cron).
+/etc/cron.d/uncvmfs - The main cron entry.
+
+
+Basic Principles & Usage
+------------------------
+
+unCVMFS manages three directories, the repo, store & database dirs. The repo dir
+is the main output directory, this is populated with the standard contents of
+the target CVMFS repository (i.e. on completion this dir will look like
+/cvmfs/<repo_name> would on a standard CVMFS system). The store dir is where the
+main data files for the filesystem are kept. This is stored in a similar format
+to a CVMFS server repository and is generally of little interest. As the repo is
+poulated, files are downloaded into the store dir and if possible hardlinked
+into the repo dir. This allows for inherent deduplication, but requires that
+that the repo and store dir _must_ be on the same host file system. Finally the
+database (db) dir holds the current unCVMFS (catalog.db) and CVMFS (various
+<sha1_sum>.db) catalogs in sqlite3 format.
+
+unCVMFS uses a single config file to describe the repositories to download. The
+config file is in INI/ConfigParser format with each section represting a
+repository. See the provided default config file in /etc/uncvmfs.conf for the
+full config file documnetation.
+
+unCVMFS would normally run regularly from a Cron job to keep the given repo
+directory up-to-date. The provided example Cron tab file has a default run time
+of every two hours for the repositories listed in /etc/sysconfig/uncvmfs. This
+file enables no repositories by default as most of the configuration will be
+site-specific.
+
+On a clean installation, it's recommended that the initialisation of the
+repository is done by manually until the repository is synced and then the cron
+job can be anbled. The initial run on a large repository, such as ATLAS or CMS
+(.cern.ch) may take one to two days. It is also recommended that unCVMFS be run
+twice for the initialisation just to ensure that all files are correctly
+initialised (downloading millions of files over HTTP is seemingly prone to
+bursts of errors every so often). The syncronisation process can be interrupted
+& restarted by ctrl+c for any reason, it will also stop with a suitable message
+if an unrecoverable error (such as running out of disk space) occurs. Once a
+repositry is sucesffuly synced, the cron job should be enabled to keep it
+up-to-date.
+
+An example of running unCVMFS to sync the CMS area using 16 threads is (assuming
+cms.cern.ch is a section in the config file):
+  uncvmfs -vv -n4 /etc/uncvmfs.conf cms.cern.ch
+
+Use of a multiplexing terminal manager such as screen is advised for operations
+that may take a long time over remote connections.
+
+
+Maintenance & Problems
+----------------------
+
+A tool for doing repository maineance, uncvmfs_tool is included. Care should be
+taken to disable any cron jobs that may access the database while using this,
+although the database will be locked to avoid any accidental damage. There are
+two main maintenance operations that can be done fsck & tidy; other
+informational operations are also availalbe (see uncvmfs_tool --help for a
+complete list).
+
+The uncvmfs_tool file system checker (fsck) checks through the repo directory
+and the catalog in parallel looking for any inconsistencies. Any differences
+found will be corrected or (in the case of missing files) marked for repair on
+the next main uncvmfs run. unCVMFS should be run on the repository after an
+uncvmfs_tool fsck operation completes (if errors were reported). In general
+there should be no need to run fsck unless it is suspected that the repo has
+been modified directly or if there are problems with repo files.
+
+The tidy operation scans through the store directory and removes any files which
+only have only one link.These occur when a file is superceded in the catalog and
+can't be deleted immediately for performance reasons. The uncvmfs_tool tidy
+operation will be run automatically on Sunday mornings on any enabled
+repositories by the included example cron job.
+
+If any further repository corruption occurs unCVMFS may exit with an sqlite
+exception. This indicates a problem with the hardware running unCVMFS or a bug
+in the code. If a hardware problem is not suspected then please report it to the
+developers. Running uncvmfs with the debug level at mavimum (-vv flags) should
+return the sha1 hash of the faulty catalog. Remove the <sha1_sum>.db file from
+the database directory and the matching entry from the catalogs table of
+catalogs.db to recover. If the problem persists then this indicates a
+faulty/unexpected upstream catalog.
+

@@ -1,0 +1,6 @@
+# unCVMFS example cron job
+MAILTO=root
+
+# Run at one minute past every other hour
+1 */2 * * * root /usr/bin/uncvmfs_cron
+

@@ -1,0 +1,335 @@
+#!/usr/bin/python
+"""
+unCVMFS tool -- A compaion tool for unCVMFS.
+Copyright 2014, Imperial College HEP Group
+"""
+
+import os
+import sys
+import stat
+import getopt
+import shutil
+import logging
+from UNCVMFSLib import UNCVMFS_VERSION
+from UNCVMFSLib import CVMFSManager, UNCVMFSConfig
+
+
+def do_info(_, manager):
+  """ Prints some basic information about the repo.
+  """
+  print "Mountpoints:"
+  mp_dict = manager.mountpoints()
+  mountpoints = mp_dict.keys()
+  mountpoints.sort()
+  for mountpoint in mountpoints:
+    print "  %s - %s" % (mountpoint, mp_dict[mountpoint])
+
+def do_ls(_, manager, path):
+  """ Lists a directory from the database.
+  """
+  for _, _, full_path, dirs, links, files in manager.walk(path):
+    print "Listing of '%s':" % full_path
+    path_objs = {}
+    path_names = []
+    # Now gather all of the objects
+    for oname, seen, _ in dirs:
+      path_names.append(oname)
+      path_objs[oname] = "drwxr-xr-x  %u        16  %s" % (seen, oname)
+    for oname, target, seen, _ in links:
+      path_names.append(oname)
+      path_objs[oname] = "lrwxrwxrwx  %u         0  %s -> %s" % \
+                            (seen, oname, target)
+    for oname, size, mode, _, seen, _ in files:
+      path_names.append(oname)
+      mode_str = "-rw-r--r--"
+      if stat.S_IMODE(mode) & stat.S_IXUSR:
+        mode_str = "-rwxr-xr-x"
+      path_objs[oname] = "%s  %u  %8u  %s" % (mode_str, seen, size, oname)
+    # Now print out each object
+    path_names.sort()
+    for oname in path_names:
+      print " %s" % path_objs[oname]
+    break # Only print requested directory
+
+def __fsck_dir(cat_obj, phys_path, dir_info):
+  """ Check a dir matches a database entry and if not mark it as missing.
+  """
+  dname, seen, path_hash = dir_info
+  if seen != 1:
+    return 0
+  # Check the object is on disk and matches
+  full_path = os.path.join(phys_path, dname)
+  file_ok = False
+  try:
+    stat_info = os.lstat(full_path)
+    if stat.S_ISDIR(stat_info.st_mode):
+      file_ok = True
+    else:
+      logging.warning("Directory '%s' is not a dir.", full_path)
+  except OSError:
+    pass # Ignore error
+  # Now we mark the file as missing if the above checks failed
+  if not file_ok:
+    cat_obj.set_seen(path_hash, 0)
+    return 1
+  return 0
+
+def __fsck_link(conf, cat_obj, phys_path, link_info):
+  """ Check a link matches a database entry and if not mark it as missing.
+  """
+  lname, target, seen, path_hash = link_info
+  if seen != 1:
+    return 0
+  # Check the object
+  full_path = os.path.join(phys_path, lname)
+  file_ok = False
+  try:
+    stat_info = os.lstat(full_path)
+    if not stat.S_ISLNK(stat_info.st_mode):
+      logging.warning("Link '%s' is not a link.", full_path)
+      raise OSError("Link is not a link.")
+    real_target = os.readlink(full_path)
+    exp_target = conf.expand_env(target)
+    if real_target != exp_target:
+      logging.warning("Link '%s' expected target '%s' != actual target '%s'.",
+                        full_path, exp_target, real_target)
+      raise OSError("Link target is wrong.")
+    # All the tests passed
+    file_ok = True
+  except OSError:
+    pass # Ignore error
+  # Deal with any problesm
+  if not file_ok:
+    cat_obj.set_seen(path_hash, 0)
+    return 1
+  return 0
+
+def __fsck_file(cat_obj, phys_path, file_info):
+  """ Check a file matches a database entry and if not mark it as missing.
+  """
+  fname, fsize, fmode, _, seen, path_hash = file_info
+  if seen != 1:
+    return 0
+  # Check file
+  full_path = os.path.join(phys_path, fname)
+  file_ok = False
+  try:
+    stat_info = os.lstat(full_path)
+    if not stat.S_ISREG(stat_info.st_mode):
+      logging.warning("File '%s' is not a normal file.", full_path)
+      raise OSError("File is not a file.")
+    if stat_info.st_size != fsize:
+      logging.warning("File '%s' is not expected size (Exp: %u != Act: %u)",
+                        full_path, fsize, stat_info.st_size)
+      raise OSError("File is wrong size.")
+    # We check the permission, but only simply:
+    # If the file should be executable, but isn't, then that's an error.
+    # The otherway round and may occur on files linked in multiple places.
+    if stat.S_IMODE(fmode) & stat.S_IXUSR:
+      if not stat.S_IMODE(stat_info.st_mode) & stat.S_IXUSR:
+        # Simply fix the error
+        logging.warning("File '%s' +x mismatch, correcting...", full_path)
+        os.chmod(full_path, 0755)
+        return 1 # We can return here with an error to add to the count
+        # If any more tests are added below, something cleverer will be needed.
+    # This test deletes the special files created when there are too many links
+    # As these are just copies that have a single link...
+    #if stat_info.st_nlink < 2:
+    #  logging.warning("File '%s' is not linked from store.", full_path)
+    #  raise OSError("File is not correctly linked.")
+    # We could also check the mode here, but that could cause "flipflopping"
+    # if the file is linked in two places with two different modes.
+    # This should never _really_ happen, so maybe we'll include the check in
+    # a future version?
+    # All the tests are OK
+    file_ok = True
+  except OSError:
+    pass # Ignore errors
+  # Mark file as bad if that's the case
+  if not file_ok:
+    cat_obj.set_seen(path_hash, 0)
+    return 1
+  return 0
+
+def __fsck_remove(phys_path, obj_list):
+  """ Remove files that shouldn't exist. This simply removes the objects in
+      obj_list from phys_path, recursively if required.
+      Errors will be logged but not raised.
+  """
+  for oname in obj_list:
+    full_path = os.path.join(phys_path, oname)
+    try:
+      stat_info = os.stat(full_path)
+    except OSError:
+      continue # Object already missing? Ignore it...
+    try:
+      if stat.S_ISDIR(stat_info.st_mode):
+        shutil.rmtree(full_path)
+      else:
+        os.unlink(full_path)
+    except OSError:
+      logging.warning("Failed to delete extra object '%s'.", full_path)
+
+def do_fsck(conf, manager, path):
+  """ Scans through the repo directory and compares the objects with the
+      database. Any extra objects are deleted, any missing objects are
+      marked as missing. Any objects present that should be are marked as such
+      in the DB. (i.e. the database & disk are made consistent to the point
+      the CVMFS command will run). The database & disk will only be truly
+      consistent if uncvmfs itself is run after this.
+  """
+  _, repo_path, _ = conf.get_paths()
+  errors = 0 # Count of errors found
+  # We walk through the catalog and compare it with the FS
+  logging.debug("Running fsck on '%s'...", path)
+  for cat_obj, step, full_path, dirs, links, files in manager.walk(path):
+    # We process everything in step 0, but we have to commit on step 2.
+    if step == 2:
+      cat_obj.commit()
+      continue
+    if step:
+      continue
+    phys_path = os.path.normpath("%s/%s" % (repo_path, full_path))
+    real_objs = []
+    try:
+      real_objs = os.listdir(phys_path) # Get the items in current dir
+    except OSError:
+      # Listing dir failed, pretend it's empty and continue
+      pass
+    # Now we can actually check the objects
+    # Dirs...
+    for obj_info in dirs:
+      oname = obj_info[0]
+      if oname in real_objs:
+        real_objs.remove(oname)
+      errors += __fsck_dir(cat_obj, phys_path, obj_info)
+    # Links...
+    for obj_info in links:
+      oname = obj_info[0]
+      if oname in real_objs:
+        real_objs.remove(oname)
+      errors += __fsck_link(conf, cat_obj, phys_path, obj_info)
+    # Files...
+    for obj_info in files:
+      oname = obj_info[0]
+      if oname in real_objs:
+        real_objs.remove(oname)
+      errors += __fsck_file(cat_obj, phys_path, obj_info)
+    # real_objs now only contains a list of things that shouldn't exist
+    # We can just delete those now...
+    __fsck_remove(phys_path, real_objs)
+  logging.debug("fsck operation complete.")
+  if errors:
+    logging.info("Found %u errors.", errors)
+  else:
+    logging.debug("No errors found.")
+
+def do_tidy(conf, _):
+  """ Scans through the store directory for any objects with only a single
+      link and then deletes them.
+  """
+  _, _, store_path = conf.get_paths()
+  # Stat each file in the store path, if it has only one link, remove it.
+  logging.debug("Starting store_path walk...")
+  for dname, dirnames, fnames in os.walk(store_path):
+    dirnames.sort()
+    for fname in fnames:
+      cur_path = os.path.join(dname, fname)
+      cur_obj = os.lstat(cur_path)
+      if stat.S_ISREG(cur_obj.st_mode) and cur_obj.st_nlink < 2:
+        logging.debug("Deleting '%s'.", cur_path)
+        try:
+          os.unlink(cur_path)
+        except OSError:
+          logging.exception("Failed to delete '%s'.", cur_path)
+  logging.debug("Walk completed.")
+
+CMD_LIST = [
+ ("info", do_info, False,
+    "Show DB & Catalog information"),
+ ("ls", do_ls, True,
+    "List a directory from the DB"),
+ ("fsck", do_fsck, True,
+    "Ensure the filesystem & DB are consistent"),
+ ("tidy", do_tidy, False,
+    "Tidy up the store directory"),
+]
+
+def usage(errstr=None):
+  """ Print the command usage & exit. """
+  if errstr:
+    print "ERROR: %s" % errstr
+  print "unCVMFS Version %s" % UNCVMFS_VERSION
+  print " Usage: uncvmfs_tool [options] <config_file> <repo_name> command ..."
+  print "  Options:"
+  print "   -v     -- Verbose operation (multiple for more debug info)"
+  print "  Commands:"
+  for cmd_name, _, cmd_param, cmd_help in CMD_LIST:
+    if cmd_param:
+      print "\t%s <path> - %s" % (cmd_name, cmd_help)
+    else:
+      print "\t%s - %s" % (cmd_name, cmd_help)
+  print ""
+  sys.exit(0)
+
+def run_cmd(conf, args):
+  """ Run the command the user requested. """
+  manager = CVMFSManager(conf)
+  req_cmd = args[2]
+  cmd_ok = False
+  for cmd_name, cmd_fcn, cmd_param, _ in CMD_LIST:
+    if req_cmd == cmd_name:
+      # We've found the command the user requested
+      cmd_ok = True
+      if cmd_param:
+        if len(args) != 4:
+          usage("Command '%s' requires a path parameter." % req_cmd)
+        cmd_fcn(conf, manager, args[3])
+      else:
+        cmd_fcn(conf, manager)
+  if not cmd_ok:
+    usage("Unknown command '%s'." % req_cmd)
+
+def main():
+  """ Main application entry point. """
+  # Application options
+  verbose = 0
+  conf_name = None
+  repo_name = None
+  # Process command line options
+  try:
+    opts, args = getopt.getopt(sys.argv[1:], "v")
+  except getopt.GetoptError as err:
+    usage("Option error: %s" % str(err))
+  # Process positional arguments
+  if len(args) < 3:
+    usage("Expected config_file, repo_name & command.")
+  conf_name, repo_name = args[0:2]
+  # Now process the standard arguments
+  for opt, _ in opts:
+    if opt == "-v":
+      verbose += 10
+    else:
+      usage("Unknown option: %s" % opt)
+  # Set-up logging
+  if verbose > 20:
+    usage("Only a maximum of two -v options may be specified.")
+  logging.basicConfig(format="%(asctime)s %(levelname)s %(message)s")
+  root_logger = logging.getLogger()
+  root_logger.setLevel(logging.WARNING - verbose)
+  # Process the config
+  logging.debug("Reading config file...")
+  conf = UNCVMFSConfig()
+  conf_err = conf.load_config(conf_name, repo_name)
+  if conf_err:
+    logging.critical("Failed to read conf file: %s", conf_err)
+    sys.exit(1)
+  # Everything OK, run the real work
+  try:
+    run_cmd(conf, args)
+  except KeyboardInterrupt:
+    sys.exit(0)
+
+if __name__ == '__main__':
+  main()
+

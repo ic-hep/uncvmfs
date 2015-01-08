@@ -1,0 +1,267 @@
+#!/usr/bin/python
+"""
+unCVMFS -- A program for unpacking a CVMFS repo to a directory.
+Copyright 2014, Imperial College HEP Group
+"""
+
+import os
+import sys
+import stat
+import getopt
+import shutil
+import logging
+from UNCVMFSLib import UNCVMFS_VERSION
+from UNCVMFSLib import CVMFSManager, UNCVMFSDownloadPool, UNCVMFSConfig
+
+
+def __tidy_object(full_path, throw=False):
+  """ Deletes an object in the given path.
+      If the object is a directory, the entire tree will be removed.
+      A symlink or file will simply be deleted.
+      Throw causes an exception to be thrown if an error occurs,
+      otherwise errors will be ignored silently.
+      Note: This doesn't tidy the store directory in any way.
+  """
+  try:
+    stat_info = os.lstat(full_path)
+  except OSError:
+    # The object is already missing?
+    return
+  # Object exists, try to delete it
+  try:
+    if stat.S_ISDIR(stat_info.st_mode):
+      # Directories need removing recursively
+      shutil.rmtree(full_path)
+    else:
+      # Delete all other objects with unlink
+      os.unlink(full_path)
+  except OSError:
+    if throw:
+      raise
+
+def do_dirs(cat_obj, path, dirs):
+  """ Creates all the dirs that need creating from dirs list.
+      Dirs is the list from a CVMFS walk() function.
+      Path is the real (on-disk) path to create the dirs in.
+  """
+  for dname, seen, path_hash in dirs:
+    if seen:
+      continue # We're only creating dirs here
+    full_path = os.path.join(path, dname)
+    # Check if the directory already exists...
+    try:
+      stat_info = os.lstat(full_path)
+      if stat.S_ISDIR(stat_info.st_mode):
+        # Dir already exists
+        cat_obj.set_seen(path_hash)
+        continue
+    except OSError:
+      pass # It doesn't exist, continue and try to create it...
+    # We try to create the dir twice, if it fails the first time,
+    # we do a tidy up and try again...
+    last_err = None
+    for _ in (None, None):
+      try:
+        os.mkdir(full_path)
+        os.chmod(full_path, 0755)
+        cat_obj.set_seen(path_hash)
+        last_err = None
+        break
+      except OSError as err:
+        last_err = str(err)
+        __tidy_object(full_path)
+        continue
+    if last_err:
+      logging.error("Failed to create dir: %s (%s)", full_path, last_err)
+
+def do_links(conf, cat_obj, path, links):
+  """ Creates all the links that need creating from links list.
+      Links is the list from a CVMFS walk() function.
+      Path is the real (on-disk) path to create the links in.
+  """
+  for lname, target, seen, path_hash in links:
+    if seen:
+      continue
+    full_path = os.path.join(path, lname)
+    # Do things twice so we can tidy up if there is an error
+    last_err = None
+    for _ in (None, None):
+      try:
+        real_target = conf.expand_env(target)
+        os.symlink(real_target, full_path)
+        cat_obj.set_seen(path_hash)
+        last_err = None
+        break
+      except OSError as err:
+        last_err = str(err)
+        __tidy_object(full_path)
+        continue
+    if last_err:
+      logging.error("Failed to create link: %s (%s)", full_path, last_err)
+
+def complete_files(pool):
+  """ Process any files waiting on pool's completed list. """
+  while True:
+    err_str = pool.completed()
+    if err_str == None:
+      # Nothing left to complete at the moment
+      break
+    if err_str:
+      logging.error("Download failed: %s", err_str)
+
+def do_files(cat_obj, path, pool, files):
+  """ Download the files in "files" list (CVMFSCatalog.listdir() format) into
+      real (on-disk) path "path" using the download pool "pool".
+      Note: This doesn't wait for complete, correctly handling of the pool
+            with pool.wait()/pool.completed()/complete_files() is required.
+  """
+  # Now do the files
+  for file_info in files:
+    seen = file_info[4]
+    if seen:
+      continue
+    # Remove the file if it already exists
+    # This doesn't trigger a race condition as the threads work on the
+    # store path, not the repo path.
+    __tidy_object(os.path.join(path, file_info[0]))
+    # Now we can actually process creating the file...
+    pool.download(cat_obj, path, file_info)
+
+def do_deletes(cat_obj, path, dirs, files, links):
+  """ Delete any objects in real (on-disk) path "path" in they're
+      listed to be deleted in the dirs, files or links lists.
+      These lists should be in the format returned by CVMFSCatalog.listdir().
+  """
+  del_objects = []
+  # Gather the objects
+  for dname, seen, path_hash in dirs:
+    if seen != 2:
+      continue
+    del_objects.append((dname, path_hash,))
+  for lname, _, seen, path_hash in links:
+    if seen != 2:
+      continue
+    del_objects.append((lname, path_hash,))
+  for fname, _, _, _, seen, path_hash in files:
+    if seen != 2:
+      continue
+    del_objects.append((fname, path_hash,))
+  # Do all the deletes
+  for obj_name, path_hash in del_objects:
+    full_path = os.path.join(path, obj_name)
+    try:
+      __tidy_object(full_path, True)
+      cat_obj.deleted(path_hash)
+    except IOError as err:
+      logging.error("Failed to delete object: %s (%s)", full_path, str(err))
+
+def do_uncvmfs(conf, cat_only, no_update, num_threads):
+  """ The main application logic. """
+  _, data_path, _ = conf.get_paths()
+  manager = CVMFSManager(conf)
+  # Update the catalog
+  if not no_update:
+    manager.update()
+    logging.debug("Catalog update complete.")
+  if cat_only:
+    return # We've done everything asked
+  pool = UNCVMFSDownloadPool(conf, num_threads)
+  for cat_obj, step, root_path, dirs, links, files in manager.walk("/", True):
+    real_path = os.path.normpath("%s/%s" % (data_path, root_path))
+    if step == 0:
+      # On step 0 we just create the directory structure
+      do_dirs(cat_obj, real_path, dirs)
+    elif step == 1:
+      # On step 1 we can handle deletes & creations
+      do_deletes(cat_obj, real_path, dirs, files, links)
+      do_links(conf, cat_obj, real_path, links)
+      do_files(cat_obj, real_path, pool, files)
+      complete_files(pool)
+    elif step == 2:
+      # On step 2 we simply commit the catalog DB
+      pool.wait()
+      complete_files(pool)
+      cat_obj.commit()
+      logging.debug("Catalog closed.")
+  # Now we just finish off any pending downloads
+  # This is just a failsafe, everything should already be done.
+  pool.wait()
+  complete_files(pool)
+  pool.shutdown()
+
+def usage(err_str):
+  """ Print the command usage & exit. """
+  if err_str:
+    print "ERROR: %s" % err_str
+  print "unCVMFS Version %s" % UNCVMFS_VERSION
+  print " Usage: uncvmfs [options] <config_file> <repo_name>"
+  print "  Options:"
+  print "   -c     -- Only update the catalog"
+  print "   -o     -- Offline mode (don't update the catalog)"
+  print "   -n <t> -- Enable t threads for file downloads"
+  print "   -v     -- Verbose operation (multiple for more debug info)"
+  print ""
+  sys.exit(0)
+
+def main():
+  """ Main application entry point. """
+  # Application options
+  cat_only = False
+  no_update = False
+  threads = 1
+  verbose = 0
+  conf_name = None
+  repo_name = None
+  # Process command line options
+  try:
+    opts, args = getopt.getopt(sys.argv[1:], "con:v")
+  except getopt.GetoptError as err:
+    usage("Option error: %s" % str(err))
+  # Process positional arguments
+  if len(args) != 2:
+    usage("Expected config_file and repo_name parameters.")
+  conf_name, repo_name = args
+  # Now process the standard arguments
+  for opt, param in opts:
+    if opt == "-c":
+      cat_only = True
+    if opt == "-o":
+      no_update = True
+    elif opt == "-n":
+      # Check the number of threads is reasonable
+      try:
+        threads = int(param)
+      except ValueError:
+        usage("Threads parameters incorrect (got %s)!" % param)
+      if threads < 1:
+        usage("Num threads must be >= 1")
+    elif opt == "-v":
+      verbose += 10
+  # Set-up logging
+  logging.basicConfig(format="%(asctime)s %(levelname)s %(message)s")
+  root_logger = logging.getLogger()
+  if verbose > 20:
+    usage("A maximum of 2 -v flags may be specified.")
+  root_logger.setLevel(logging.WARNING - verbose)
+  # Process the config
+  logging.debug("Reading config file...")
+  conf = UNCVMFSConfig()
+  conf_err = conf.load_config(conf_name, repo_name)
+  if conf_err:
+    logging.critical("Failed to read conf file: %s", conf_err)
+    sys.exit(1)
+  try:
+    conf.create_paths()
+  except IOError as err:
+    logging.critical("Failed to create OS path: %s", err)
+    sys.exit(1)
+  # Everything OK, run the real work
+  logging.debug("Processing updates...")
+  do_uncvmfs(conf, cat_only, no_update, threads)
+
+if __name__ == '__main__':
+  try:
+    main()
+  except KeyboardInterrupt:
+    sys.exit(0)
+
