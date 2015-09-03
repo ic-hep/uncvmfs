@@ -452,8 +452,17 @@ class CVMFSCatalog(object):
       # Copy in any files that now need deleting
       sql = "UPDATE old.catalog SET seen = 2 WHERE seen = 1"
       cur.execute(sql)
+      # We have to list the columns here otherwise new columns may
+      # cause things to break
       sql = "INSERT OR IGNORE INTO main.catalog " \
-              "SELECT * FROM old.catalog WHERE seen = 2"
+              "(md5path_1, md5path_2, parent_1, parent_2, " \
+              "hardlinks, hash, size, mode, mtime, flags, " \
+              "name, symlink, uid, gid, seen) " \
+              "SELECT " \
+              "md5path_1, md5path_2, parent_1, parent_2, " \
+              "hardlinks, hash, size, mode, mtime, flags, " \
+              "name, symlink, uid, gid, seen " \
+              "FROM old.catalog WHERE seen = 2"
       cur.execute(sql)
       # Commit the changes and tidy up
       cur.execute("DETACH DATABASE old")

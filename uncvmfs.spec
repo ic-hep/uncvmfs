@@ -5,8 +5,8 @@
 %endif
 
 Name:           uncvmfs
-Version:        0.3
-Release:        3%{?dist}
+Version:        0.4
+Release:        1%{?dist}
 Summary:        A tool for unpacking CVMFS repos
 
 Group:          Applications/Internet
@@ -77,6 +77,9 @@ getent passwd cvmfs >/dev/null || \
 exit 0
 
 %changelog
+* Thu Sep 03 2015 Simon Fayer <sf105@ic.ac.uk> - 0.4-1
+ - Fix problems created by introduction of xattr catalog column.
+
 * Wed Dec 10 2014 Simon Fayer <sf105@ic.ac.uk> - 0.3-3
  - Minor fix in cron job logging.
 
