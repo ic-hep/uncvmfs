@@ -23,6 +23,7 @@ import Queue
 import shutil
 import struct
 import hashlib
+import httplib
 import logging
 import sqlite3
 import urllib2
@@ -880,6 +881,13 @@ class UNCVMFSDownloadPool(object):
             file_fd.close()
             self.__unlock_hash(fhash)
             self.__doneq.put(("Failed to download (%s): %s" % (hash_path, err),
+                               cat_obj, file_info))
+            self.__downloadq.task_done()
+            continue
+          except httplib.BadStatusLine as err:
+            file_fd.close()
+            self.__unlock_hash(fhash)
+            self.__doneq.put(("Server error, BSL (%s): %s" % (hash_path, err),
                                cat_obj, file_info))
             self.__downloadq.task_done()
             continue
