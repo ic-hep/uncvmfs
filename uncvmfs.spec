@@ -77,6 +77,9 @@ getent passwd cvmfs >/dev/null || \
 exit 0
 
 %changelog
+* Thu Nov 12 2015 Simon Fayer <sf105@ic.ac.uk> - 0.4-2
+ - Catch BadStatusLine exception correctly.
+
 * Thu Sep 03 2015 Simon Fayer <sf105@ic.ac.uk> - 0.4-1
  - Fix problems created by introduction of xattr catalog column.
 
