@@ -7,7 +7,7 @@ siglib = Extension('CVMFSSig',
 
 # Install all the parts of unCVMFS, including the extension.
 setup(name = 'uncvmfs',
-      version = '0.4',
+      version = '0.5',
       description = 'A tool for unpacking CVMFS repos',
       scripts = ['uncvmfs', 'uncvmfs_tool'],
       py_modules = ['UNCVMFSLib'],
