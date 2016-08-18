@@ -478,10 +478,14 @@ class CVMFSCatalog(object):
         Note: This function is not recursive.
         Returns: A list of (path, hash) tuples, one for each sub-cat.
     """
-    cur = self.__db_conn.cursor()
-    cur.execute("SELECT path, sha1 FROM nested_catalogs")
-    res = cur.fetchall()
-    cur.close()
+    try:
+      cur = self.__db_conn.cursor()
+      cur.execute("SELECT path, sha1 FROM nested_catalogs")
+      res = cur.fetchall()
+      cur.close()
+    except sqlite3.OperationalError, oe:
+      self.__config.get_log().error("Failed to query nested catalog: %s", str(oe))
+      return []
     return res
 
   def is_done(self):
