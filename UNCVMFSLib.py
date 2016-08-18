@@ -768,10 +768,13 @@ class CVMFSManager(object):
     # Now process the sub-catalogs
     for sub_path, sub_hash in cat_obj.children():
       # Skip blacklisted sub-catalogs
+      blacklisted = False
       for entry in self.__blacklist_paths:
         if fnmatch.fnmatch(sub_path, entry):
           self.__config.get_log().debug("Skipping sub-catalog '%s' based on blacklist '%s'.", sub_path, entry)
-          continue
+          blacklisted = True
+          break
+      if blacklisted: continue
       sub_total, sub_updated = self.__update_cats(sub_path, sub_hash)
       num_total += sub_total
       num_updated += sub_updated
