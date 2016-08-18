@@ -502,11 +502,15 @@ class CVMFSCatalog(object):
       self.__done_eval = True
       return False
     # Check how many files are set as seen:
-    cur = self.__db_conn.cursor()
-    sql = "SELECT COUNT(rowid) FROM catalog WHERE seen != 1"
-    cur.execute(sql)
-    res = cur.fetchone()
-    cur.close()
+    try:
+        cur = self.__db_conn.cursor()
+        sql = "SELECT COUNT(rowid) FROM catalog WHERE seen != 1"
+        cur.execute(sql)
+        res = cur.fetchone()
+        cur.close()
+    except sqlite3.OperationalError, oe:
+        self.__config.get_log().error("Failed to query catalog: %s", str(oe))
+        return True
     # Check the number of objects left to process
     self.__is_done = (res[0] <= 1)
     self.__done_eval = True
