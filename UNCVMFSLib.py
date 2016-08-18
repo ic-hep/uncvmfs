@@ -746,6 +746,12 @@ class CVMFSManager(object):
     # Get the old hash of the catalog
     num_total = 1
     num_updated = 0
+    # Skip blacklisted sub-catalogs
+    for entry in self.__blacklist_paths:
+      if fnmatch.fnmatch(cat_path, entry):
+        self.__config.get_log().debug("Skipping '%s' based on blacklist '%s'.", sub_path, entry)
+        return num_total, num_updated
+
     old_hash = self.__cat_hash(cat_path)
     cat_obj = CVMFSCatalog(self.__config, cat_path, old_hash)
     # If the hash has changed, update the catalog
@@ -764,7 +770,7 @@ class CVMFSManager(object):
       # Skip blacklisted sub-catalogs
       for entry in self.__blacklist_paths:
         if fnmatch.fnmatch(sub_path, entry):
-          self.__config.get_log().debug("Skipping '%s' based on blacklist '%s'.", sub_path, entry)
+          self.__config.get_log().debug("Skipping sub-catalog '%s' based on blacklist '%s'.", sub_path, entry)
           continue
       sub_total, sub_updated = self.__update_cats(sub_path, sub_hash)
       num_total += sub_total
