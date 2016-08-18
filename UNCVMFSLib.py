@@ -375,6 +375,7 @@ class CVMFSCatalog(object):
     self.__downloader = CVMFSDownloader(config)
     self.__cat_path = cat_path
     self.__cat_hash = cat_hash
+    self.__blacklist_paths = config.get_blacklist()
     self.__db_conn = None
     self.__changes = 0 # Number of changes (for tracking autocommit)
     self.__autocommit = autocommit
@@ -387,6 +388,12 @@ class CVMFSCatalog(object):
   def __del__(self):
     pass
     #self.__close_db() # We can't close here as deleteion is in any thread!
+
+  def __valid_path(self, pathname):
+    for entry in self.__blacklist_paths:
+      if fnmatch.fnmatch(pathname, entry):
+        return False
+    return True
 
   def __open_db(self):
     """ Opens the DB of the current specified cat_hash. """
