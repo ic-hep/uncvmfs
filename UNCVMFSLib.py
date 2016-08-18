@@ -664,6 +664,8 @@ class CVMFSCatalog(object):
     # Handle the recursion
     for dir_name, _, _ in dirs:
       dir_path = os.path.join(real_path, dir_name)
+      if not self.__valid_path(dir_path):
+        continue
       if dir_path in sub_cats:
         # This dir is a mountpoint, traverse down
         self.__config.get_log().debug("Walking into '%s'..." % dir_path)
