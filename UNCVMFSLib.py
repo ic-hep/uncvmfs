@@ -22,6 +22,7 @@ import errno
 import Queue
 import shutil
 import struct
+import fnmatch
 import hashlib
 import httplib
 import logging
@@ -689,11 +690,24 @@ class CVMFSManager(object):
             "(path TEXT PRIMARY KEY, hash TEXT, seen INT)"
     self.__db_conn.execute(sql)
     self.__db_conn.commit()
+    self.__whitelist_paths = config.get_whitelist()
+    self.__blacklist_paths = config.get_blacklist()
 
   def __del__(self):
     if self.__db_conn:
       self.__db_conn.close()
       self.__db_conn = None
+
+  def __valid_path(self, pathname):
+    for entry in self.__blacklist_paths:
+      if fnmatch.fnmatch(pathname, entry):
+        return False
+    if self.__whitelist_paths:
+      for entry in self.__whitelist_paths:
+        if fnmatch.fnmatch(pathname, entry):
+          return True
+      return False
+    return True
 
   def __cat_hash(self, cat_path):
     """ Gets the current known hash for a given path.
@@ -747,6 +761,10 @@ class CVMFSManager(object):
     self.__db_conn.commit() # Ensure DB is now consistent
     # Now process the sub-catalogs
     for sub_path, sub_hash in cat_obj.children():
+      # Skip blacklisted sub-catalogs
+      for entry in self.__blacklist_paths:
+        if fnmatch.fnmatch(sub_path, entry):
+          continue
       sub_total, sub_updated = self.__update_cats(sub_path, sub_hash)
       num_total += sub_total
       num_updated += sub_updated
@@ -795,7 +813,8 @@ class CVMFSManager(object):
     # We now have the best cat, walk it!
     cat_obj = CVMFSCatalog(self.__config, best_cat, cats[best_cat])
     for info in cat_obj.walk(real_path, skip_done):
-      yield info
+      if self.__valid_path(info[2]):
+        yield info
     # Complete the final catalog
     yield (cat_obj, 2, real_path, [], [], [])
 
@@ -981,6 +1000,8 @@ class UNCVMFSConfig(object):
     self.__proxy = ""
     self.__urls = None
     self.__keys = None
+    self.__whitelist_paths = []
+    self.__blacklist_paths = []
     self.__env = {}
 
   def load_config(self, filename, repo):
@@ -1011,6 +1032,10 @@ class UNCVMFSConfig(object):
         self.__urls = collections.deque(tmp_urls)
       elif opt == 'keys':
         self.__keys = get_array_opt(conf.get(repo, "keys"))
+      elif opt == 'blacklist_paths':
+        self.__blacklist_paths = get_array_opt(conf.get(repo, "blacklist_paths"))
+      elif opt == 'whitelist_paths':
+        self.__whitelist_paths = get_array_opt(conf.get(repo, "whitelist_paths"))
       elif opt == 'proxy':
         self.__proxy = conf.get(repo, "proxy")
       elif opt == 'env':
@@ -1049,6 +1074,20 @@ class UNCVMFSConfig(object):
     paths.append(data_path)
     for path in paths:
       __mkdir(path)
+
+  def get_blacklist(self):
+    """ Returns a list of Unix globs representing a blacklist
+        for this repo.  Any path matching these globs should not
+        be synchronized.
+    """
+    return self.__blacklist_paths
+
+  def get_whitelist(self):
+    """ Return a list of Unix globs representing a whitelist for
+        this repo.  If non-empty, then all synchronized paths should
+        match at least one glob on the whitelist.
+    """
+    return self.__whitelist_paths
 
   def get_log(self):
     """ Returns a logging object for the UNCVMFS Library.
