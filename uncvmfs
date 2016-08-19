@@ -11,6 +11,7 @@ import stat
 import getopt
 import shutil
 import logging
+import tempfile
 from UNCVMFSLib import UNCVMFS_VERSION
 from UNCVMFSLib import CVMFSManager, UNCVMFSDownloadPool, UNCVMFSConfig
 
