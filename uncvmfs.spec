@@ -3,6 +3,11 @@
 %{!?python2_sitelib: %global python2_sitelib %(%{__python2} -c "from distutils.sysconfig import get_python_lib; print(get_python_lib())")}
 %{!?python2_sitearch: %global python2_sitearch %(%{__python2} -c "from distutils.sysconfig import get_python_lib; print(get_python_lib(1))")}
 %endif
+%if 0%{?rhel} >= 7
+%define systemd 1
+%else
+%define systemd 0
+%endif
 
 Name:           uncvmfs
 Version:        0.5
@@ -23,6 +28,13 @@ BuildRequires:  python python-devel openssl-devel
 Requires:       python openssl
 Requires(pre):  shadow-utils
 
+%if %systemd
+BuildRequires: systemd-units
+Requires(post): systemd-units
+Requires(preun): systemd-units
+Requires(postun): systemd-units
+%endif
+
 %description
 A tool for unpacking CVMFS repos to a local filesystem.
 
@@ -40,11 +52,16 @@ rm -Rf %{buildroot}
 install -d %{buildroot}/%{_sysconfdir}/sysconfig
 install -m 0644 extra/uncvmfs.sysconfig \
                 %{buildroot}/%{_sysconfdir}/sysconfig/uncvmfs
+%if %systemd
+install -d %{buildroot}/%{_unitdir}
+install -m 0644 uncvmfs.service %{buildroot}/%{_unitdir}/uncvmfs@.service
+%else
 ## Cron
 install -d %{buildroot}/%{_sysconfdir}/cron.d
 install -m 0644 extra/uncvmfs.cron \
                 %{buildroot}/%{_sysconfdir}/cron.d/uncvmfs.cron
 install -m 0755 extra/uncvmfs_cron %{buildroot}/%{_bindir}/uncvmfs_cron
+%endif
 ## Conf & Keys
 install -d %{buildroot}/%{_sysconfdir}/uncvmfs/keys
 install -m 0644 uncvmfs.conf %{buildroot}/%{_sysconfdir}/uncvmfs/uncvmfs.conf
@@ -60,12 +77,16 @@ rm -Rf %{buildroot}
 %defattr(-,root,root,-)
 %{_bindir}/uncvmfs
 %{_bindir}/uncvmfs_tool
+%if %systemd
+%{_unitdir}/uncvmfs@.service
+%else
 %{_bindir}/uncvmfs_cron
+%config(noreplace) %{_sysconfdir}/cron.d/uncvmfs.cron
+%endif
 %dir %{_sysconfdir}/uncvmfs
 %config(noreplace) %{_sysconfdir}/uncvmfs/uncvmfs.conf
 %dir %{_sysconfdir}/uncvmfs/keys
 #%config %{_sysconfdir}/uncvmfs/keys/*
-%config(noreplace) %{_sysconfdir}/cron.d/uncvmfs.cron
 %config(noreplace) %{_sysconfdir}/sysconfig/uncvmfs
 %{python2_sitearch}/CVMFSSig.so
 %{python2_sitearch}/UNCVMFSLib.py*
@@ -79,6 +100,17 @@ getent passwd cvmfs >/dev/null || \
     useradd -r -g cvmfs -d %{_localstatedir}/lib/uncvmfs -s /sbin/nologin \
     -c "CVMFS tools" cvmfs
 exit 0
+
+%if %systemd
+%post
+%systemd_post uncvmfs@.service
+
+%preun
+%systemd_preun uncvmfs@.service
+
+%postun
+%systemd_postun_with_restart uncvmfs@.service
+%endif
 
 %changelog
 * Thu Nov 12 2015 Simon Fayer <sf105@ic.ac.uk> - 0.5-1

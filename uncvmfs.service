@@ -1,0 +1,18 @@
+
+[Unit]
+Description=uncvmfs repo update service
+Documentation=https://github.com/ic-hep/uncvmfs/
+After=network.target
+Wants=network.target
+
+[Service]
+ExecStart=/usr/bin/uncvmfs /etc/uncvmfs/uncvmfs.conf %i
+WorkingDirectory=/var/lib/uncvmfs
+RestartSec=30min
+Restart=always
+User=uncvmfs
+Nice=19
+
+[Install]
+WantedBy=multi-user.target
+
