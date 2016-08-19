@@ -1024,6 +1024,7 @@ class UNCVMFSConfig(object):
     self.__db_path = None
     self.__data_path = None
     self.__squashfs_path = None
+    self.__download_threads = 1
     self.__store_path = None
     self.__proxy = ""
     self.__urls = None
@@ -1055,6 +1056,8 @@ class UNCVMFSConfig(object):
       elif opt == 'squashfs_path':
         tmp_path = conf.get(repo, "squashfs_path")
         self.__squashfs_path = os.path.normpath(tmp_path)
+      elif opt == 'download_threads':
+        self.__download_threads = int(conf.get(repo, 'download_threads'))
       elif opt == 'store_path':
         tmp_path = conf.get(repo, "store_path")
         self.__store_path = os.path.normpath(tmp_path)
@@ -1135,6 +1138,12 @@ class UNCVMFSConfig(object):
     """ Returns the desired output path for the squashfs file.
     """
     return self.__squashfs_path
+
+  def get_download_threads(self):
+    """ Returns the default number of threads as set by the config file.
+        If not specified, return 1
+    """
+    return self.__download_threads
 
   def get_proxy(self):
     """ Returns the proxy server the user specified. """

@@ -5,6 +5,7 @@ Copyright 2014, Imperial College HEP Group
 """
 
 import os
+import re
 import sys
 import stat
 import getopt
@@ -12,7 +13,6 @@ import shutil
 import logging
 from UNCVMFSLib import UNCVMFS_VERSION
 from UNCVMFSLib import CVMFSManager, UNCVMFSDownloadPool, UNCVMFSConfig
-
 
 def __tidy_object(full_path, throw=False):
   """ Deletes an object in the given path.
@@ -207,7 +207,7 @@ def do_uncvmfs(conf, cat_only, no_update, num_threads):
       fd, name = tempfile.mkstemp()
       with os.fdopen(fd, "w") as fp:
         fp.write("\n".join(blacklist))
-      cmd += " -ef %s" % name
+      cmd += " -wildcards -ef %s" % name
     result = os.system(cmd)
     if name:
       os.unlink(name)
@@ -234,7 +234,7 @@ def main():
   # Application options
   cat_only = False
   no_update = False
-  threads = 1
+  threads = -1
   verbose = 0
   conf_name = None
   repo_name = None
@@ -283,6 +283,8 @@ def main():
     sys.exit(1)
   # Everything OK, run the real work
   logging.debug("Processing updates...")
+  if threads < 0:
+    threads = conf.get_download_threads()
   do_uncvmfs(conf, cat_only, no_update, threads)
 
 if __name__ == '__main__':
