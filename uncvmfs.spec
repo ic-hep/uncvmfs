@@ -26,6 +26,7 @@ BuildRoot:      %(mktemp -ud %{_tmppath}/%{name}-%{version}-%{release}-XXXXXX)
 
 BuildRequires:  python python-devel openssl-devel
 Requires:       python openssl
+Requires:       squashfs-tools
 Requires(pre):  shadow-utils
 
 %if %systemd
