@@ -199,6 +199,8 @@ def do_uncvmfs(conf, cat_only, no_update, num_threads):
     if not path_re.match(squashfs_path):
       print "Refusing to write to unsanitized squashfs path: %s" % squashfs_path
       sys.exit(1)
+    squashfs_final = squashfs_path
+    squashfs_path += ".new"
     cmd = "mksquashfs %s %s" % (data_path, squashfs_path)
     if not os.isatty(1):
       cmd += " -no-progress"
@@ -206,15 +208,16 @@ def do_uncvmfs(conf, cat_only, no_update, num_threads):
     name = None
     if blacklist:
       fd, name = tempfile.mkstemp()
+      prefix_re = re.compile("(^/+)")
       with os.fdopen(fd, "w") as fp:
-        fp.write("\n".join(blacklist))
+        fp.write("\n".join([prefix_re.sub("", i) for i in blacklist]))
       cmd += " -wildcards -ef %s" % name
     result = os.system(cmd)
     if name:
       os.unlink(name)
     if result:
       sys.exit(result)
-    # TODO: now, stageout squashfs file.
+    os.rename(squashfs_path, squashfs_final)
 
 def usage(err_str):
   """ Print the command usage & exit. """
