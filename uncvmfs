@@ -198,7 +198,7 @@ def do_uncvmfs(conf, cat_only, no_update, num_threads):
     if not path_re.match(squashfs_path):
       print "Refusing to write to unsanitized squashfs path: %s" % squashfs_path
       sys.exit(1)
-    cmd = os.system("mksquashfs %s %s" % (data_path, squashfs_path))
+    cmd = "mksquashfs %s %s" % (data_path, squashfs_path)
     if not os.isatty(1):
       cmd += " -no-progress"
     blacklist = conf.get_blacklist()
