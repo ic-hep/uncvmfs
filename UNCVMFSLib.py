@@ -1023,6 +1023,7 @@ class UNCVMFSConfig(object):
     self.__log = logging.getLogger("UNCVMFSLib")
     self.__db_path = None
     self.__data_path = None
+    self.__squashfs_path = None
     self.__store_path = None
     self.__proxy = ""
     self.__urls = None
@@ -1051,6 +1052,9 @@ class UNCVMFSConfig(object):
       elif opt == 'data_path':
         tmp_path = conf.get(repo, "data_path")
         self.__data_path = os.path.normpath(tmp_path)
+      elif opt == 'squashfs_path':
+        tmp_path = conf.get(repo, "squashfs_path")
+        self.__squashfs_path = os.path.normpath(tmp_path)
       elif opt == 'store_path':
         tmp_path = conf.get(repo, "store_path")
         self.__store_path = os.path.normpath(tmp_path)
@@ -1126,6 +1130,11 @@ class UNCVMFSConfig(object):
         (db_path, data_path, store_path)
     """
     return (self.__db_path, self.__data_path, self.__store_path)
+
+  def get_squashfs_path(self):
+    """ Returns the desired output path for the squashfs file.
+    """
+    return self.__squashfs_path
 
   def get_proxy(self):
     """ Returns the proxy server the user specified. """
