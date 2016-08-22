@@ -68,6 +68,7 @@ rm -Rf %{buildroot}
 %{python2_sitearch}/%{name}-%{version}-py2.6.egg-info
 %{_localstatedir}/lib/cvmfs
 %doc README
+%doc LICENSE
 
 %pre
 getent group cvmfs >/dev/null || groupadd -r cvmfs
@@ -78,7 +79,7 @@ exit 0
 
 %changelog
 * Thu Nov 12 2015 Simon Fayer <sf105@ic.ac.uk> - 0.5-1
- - Nothing yet!
+ - Add LICENSE file.
 
 * Thu Nov 12 2015 Simon Fayer <sf105@ic.ac.uk> - 0.4-2
  - Catch BadStatusLine exception correctly.
