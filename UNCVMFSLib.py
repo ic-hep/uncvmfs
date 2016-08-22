@@ -22,6 +22,7 @@ import errno
 import Queue
 import shutil
 import struct
+import fnmatch
 import hashlib
 import httplib
 import logging
@@ -374,6 +375,7 @@ class CVMFSCatalog(object):
     self.__downloader = CVMFSDownloader(config)
     self.__cat_path = cat_path
     self.__cat_hash = cat_hash
+    self.__blacklist_paths = config.get_blacklist()
     self.__db_conn = None
     self.__changes = 0 # Number of changes (for tracking autocommit)
     self.__autocommit = autocommit
@@ -386,6 +388,12 @@ class CVMFSCatalog(object):
   def __del__(self):
     pass
     #self.__close_db() # We can't close here as deleteion is in any thread!
+
+  def __valid_path(self, pathname):
+    for entry in self.__blacklist_paths:
+      if fnmatch.fnmatch(pathname, entry):
+        return False
+    return True
 
   def __open_db(self):
     """ Opens the DB of the current specified cat_hash. """
@@ -477,10 +485,14 @@ class CVMFSCatalog(object):
         Note: This function is not recursive.
         Returns: A list of (path, hash) tuples, one for each sub-cat.
     """
-    cur = self.__db_conn.cursor()
-    cur.execute("SELECT path, sha1 FROM nested_catalogs")
-    res = cur.fetchall()
-    cur.close()
+    try:
+      cur = self.__db_conn.cursor()
+      cur.execute("SELECT path, sha1 FROM nested_catalogs")
+      res = cur.fetchall()
+      cur.close()
+    except sqlite3.OperationalError, oe:
+      self.__config.get_log().error("Failed to query nested catalog: %s", str(oe))
+      return []
     return res
 
   def is_done(self):
@@ -497,11 +509,15 @@ class CVMFSCatalog(object):
       self.__done_eval = True
       return False
     # Check how many files are set as seen:
-    cur = self.__db_conn.cursor()
-    sql = "SELECT COUNT(rowid) FROM catalog WHERE seen != 1"
-    cur.execute(sql)
-    res = cur.fetchone()
-    cur.close()
+    try:
+        cur = self.__db_conn.cursor()
+        sql = "SELECT COUNT(rowid) FROM catalog WHERE seen != 1"
+        cur.execute(sql)
+        res = cur.fetchone()
+        cur.close()
+    except sqlite3.OperationalError, oe:
+        self.__config.get_log().error("Failed to query catalog: %s", str(oe))
+        return True
     # Check the number of objects left to process
     self.__is_done = (res[0] <= 1)
     self.__done_eval = True
@@ -655,6 +671,8 @@ class CVMFSCatalog(object):
     # Handle the recursion
     for dir_name, _, _ in dirs:
       dir_path = os.path.join(real_path, dir_name)
+      if not self.__valid_path(dir_path):
+        continue
       if dir_path in sub_cats:
         # This dir is a mountpoint, traverse down
         self.__config.get_log().debug("Walking into '%s'..." % dir_path)
@@ -689,11 +707,24 @@ class CVMFSManager(object):
             "(path TEXT PRIMARY KEY, hash TEXT, seen INT)"
     self.__db_conn.execute(sql)
     self.__db_conn.commit()
+    self.__whitelist_paths = config.get_whitelist()
+    self.__blacklist_paths = config.get_blacklist()
 
   def __del__(self):
     if self.__db_conn:
       self.__db_conn.close()
       self.__db_conn = None
+
+  def __valid_path(self, pathname):
+    for entry in self.__blacklist_paths:
+      if fnmatch.fnmatch(pathname, entry):
+        return False
+    if self.__whitelist_paths:
+      for entry in self.__whitelist_paths:
+        if fnmatch.fnmatch(pathname, entry):
+          return True
+      return False
+    return True
 
   def __cat_hash(self, cat_path):
     """ Gets the current known hash for a given path.
@@ -732,6 +763,12 @@ class CVMFSManager(object):
     # Get the old hash of the catalog
     num_total = 1
     num_updated = 0
+    # Skip blacklisted sub-catalogs
+    for entry in self.__blacklist_paths:
+      if fnmatch.fnmatch(cat_path, entry):
+        self.__config.get_log().debug("Skipping '%s' based on blacklist '%s'.", sub_path, entry)
+        return num_total, num_updated
+
     old_hash = self.__cat_hash(cat_path)
     cat_obj = CVMFSCatalog(self.__config, cat_path, old_hash)
     # If the hash has changed, update the catalog
@@ -747,6 +784,14 @@ class CVMFSManager(object):
     self.__db_conn.commit() # Ensure DB is now consistent
     # Now process the sub-catalogs
     for sub_path, sub_hash in cat_obj.children():
+      # Skip blacklisted sub-catalogs
+      blacklisted = False
+      for entry in self.__blacklist_paths:
+        if fnmatch.fnmatch(sub_path, entry):
+          self.__config.get_log().debug("Skipping sub-catalog '%s' based on blacklist '%s'.", sub_path, entry)
+          blacklisted = True
+          break
+      if blacklisted: continue
       sub_total, sub_updated = self.__update_cats(sub_path, sub_hash)
       num_total += sub_total
       num_updated += sub_updated
@@ -795,7 +840,8 @@ class CVMFSManager(object):
     # We now have the best cat, walk it!
     cat_obj = CVMFSCatalog(self.__config, best_cat, cats[best_cat])
     for info in cat_obj.walk(real_path, skip_done):
-      yield info
+      if self.__valid_path(info[2]):
+        yield info
     # Complete the final catalog
     yield (cat_obj, 2, real_path, [], [], [])
 
@@ -977,10 +1023,14 @@ class UNCVMFSConfig(object):
     self.__log = logging.getLogger("UNCVMFSLib")
     self.__db_path = None
     self.__data_path = None
+    self.__squashfs_path = None
+    self.__download_threads = 1
     self.__store_path = None
     self.__proxy = ""
     self.__urls = None
     self.__keys = None
+    self.__whitelist_paths = []
+    self.__blacklist_paths = []
     self.__env = {}
 
   def load_config(self, filename, repo):
@@ -1003,6 +1053,11 @@ class UNCVMFSConfig(object):
       elif opt == 'data_path':
         tmp_path = conf.get(repo, "data_path")
         self.__data_path = os.path.normpath(tmp_path)
+      elif opt == 'squashfs_path':
+        tmp_path = conf.get(repo, "squashfs_path")
+        self.__squashfs_path = os.path.normpath(tmp_path)
+      elif opt == 'download_threads':
+        self.__download_threads = int(conf.get(repo, 'download_threads'))
       elif opt == 'store_path':
         tmp_path = conf.get(repo, "store_path")
         self.__store_path = os.path.normpath(tmp_path)
@@ -1011,6 +1066,10 @@ class UNCVMFSConfig(object):
         self.__urls = collections.deque(tmp_urls)
       elif opt == 'keys':
         self.__keys = get_array_opt(conf.get(repo, "keys"))
+      elif opt == 'blacklist_paths':
+        self.__blacklist_paths = get_array_opt(conf.get(repo, "blacklist_paths"))
+      elif opt == 'whitelist_paths':
+        self.__whitelist_paths = get_array_opt(conf.get(repo, "whitelist_paths"))
       elif opt == 'proxy':
         self.__proxy = conf.get(repo, "proxy")
       elif opt == 'env':
@@ -1050,6 +1109,20 @@ class UNCVMFSConfig(object):
     for path in paths:
       __mkdir(path)
 
+  def get_blacklist(self):
+    """ Returns a list of Unix globs representing a blacklist
+        for this repo.  Any path matching these globs should not
+        be synchronized.
+    """
+    return self.__blacklist_paths
+
+  def get_whitelist(self):
+    """ Return a list of Unix globs representing a whitelist for
+        this repo.  If non-empty, then all synchronized paths should
+        match at least one glob on the whitelist.
+    """
+    return self.__whitelist_paths
+
   def get_log(self):
     """ Returns a logging object for the UNCVMFS Library.
     """
@@ -1060,6 +1133,17 @@ class UNCVMFSConfig(object):
         (db_path, data_path, store_path)
     """
     return (self.__db_path, self.__data_path, self.__store_path)
+
+  def get_squashfs_path(self):
+    """ Returns the desired output path for the squashfs file.
+    """
+    return self.__squashfs_path
+
+  def get_download_threads(self):
+    """ Returns the default number of threads as set by the config file.
+        If not specified, return 1
+    """
+    return self.__download_threads
 
   def get_proxy(self):
     """ Returns the proxy server the user specified. """
