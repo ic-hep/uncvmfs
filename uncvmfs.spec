@@ -55,7 +55,8 @@ install -m 0644 extra/uncvmfs.sysconfig \
                 %{buildroot}/%{_sysconfdir}/sysconfig/uncvmfs
 %if %systemd
 install -d %{buildroot}/%{_unitdir}
-install -m 0644 uncvmfs.service %{buildroot}/%{_unitdir}/uncvmfs@.service
+install -m 0644 extra/uncvmfs.service \
+                %{buildroot}/%{_unitdir}/uncvmfs@.service
 %else
 ## Cron
 install -d %{buildroot}/%{_sysconfdir}/cron.d
