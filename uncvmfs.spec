@@ -66,8 +66,8 @@ install -m 0755 extra/uncvmfs_cron %{buildroot}/%{_bindir}/uncvmfs_cron
 ## Conf & Keys
 install -d %{buildroot}/%{_sysconfdir}/uncvmfs/keys
 install -m 0644 uncvmfs.conf %{buildroot}/%{_sysconfdir}/uncvmfs/uncvmfs.conf
-#install -m 0644 extra/keys/* \
-#                %{buildroot}/%{_sysconfdir}/uncvmfs/keys
+install -m 0644 extra/keys/* \
+                %{buildroot}/%{_sysconfdir}/uncvmfs/keys
 ## "Home" directory
 install -d %{buildroot}/%{_localstatedir}/lib/uncvmfs
 
@@ -87,7 +87,7 @@ rm -Rf %{buildroot}
 %dir %{_sysconfdir}/uncvmfs
 %config(noreplace) %{_sysconfdir}/uncvmfs/uncvmfs.conf
 %dir %{_sysconfdir}/uncvmfs/keys
-#%config %{_sysconfdir}/uncvmfs/keys/*
+%config %{_sysconfdir}/uncvmfs/keys/*
 %config(noreplace) %{_sysconfdir}/sysconfig/uncvmfs
 %{python2_sitearch}/CVMFSSig.so
 %{python2_sitearch}/UNCVMFSLib.py*
