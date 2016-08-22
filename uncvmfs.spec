@@ -117,6 +117,7 @@ exit 0
 %changelog
 * Thu Nov 12 2015 Simon Fayer <sf105@ic.ac.uk> - 0.5-1
  - Add LICENSE file.
+ - Merge fixes, CentOS7/systemd & squashfs support from bbockelm.
 
 * Thu Nov 12 2015 Simon Fayer <sf105@ic.ac.uk> - 0.4-2
  - Catch BadStatusLine exception correctly.
