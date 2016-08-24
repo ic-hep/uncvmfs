@@ -10,7 +10,7 @@
 %endif
 
 Name:           uncvmfs
-Version:        0.5
+Version:        0.6
 Release:        1%{?dist}
 Summary:        A tool for unpacking CVMFS repos
 
@@ -123,7 +123,10 @@ exit 0
 %endif
 
 %changelog
-* Thu Nov 12 2015 Simon Fayer <sf105@ic.ac.uk> - 0.5-1
+* Wed Aug 24 2016 Simon Fayer <sf105@ic.ac.uk> - 0.6-1
+ - Nothing yet!
+
+* Wed Aug 24 2016 Simon Fayer <sf105@ic.ac.uk> - 0.5-1
  - Add LICENSE file.
  - Merge fixes, CentOS7/systemd & squashfs support from bbockelm.
 
