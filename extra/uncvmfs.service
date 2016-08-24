@@ -6,10 +6,9 @@ After=network.target
 Wants=network.target
 
 [Service]
+Type=simple
 ExecStart=/usr/bin/uncvmfs /etc/uncvmfs/uncvmfs.conf %i
 WorkingDirectory=/var/lib/uncvmfs
-RestartSec=30min
-Restart=always
 User=cvmfs
 Nice=19
 

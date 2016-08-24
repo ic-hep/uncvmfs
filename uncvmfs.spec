@@ -57,6 +57,8 @@ install -m 0644 extra/uncvmfs.sysconfig \
 install -d %{buildroot}/%{_unitdir}
 install -m 0644 extra/uncvmfs.service \
                 %{buildroot}/%{_unitdir}/uncvmfs@.service
+install -m 0644 extra/uncvmfs.timer \
+                %{buildroot}/%{_unitdir}/uncvmfs@.timer
 %else
 ## Cron
 install -d %{buildroot}/%{_sysconfdir}/cron.d
@@ -81,6 +83,7 @@ rm -Rf %{buildroot}
 %{_bindir}/uncvmfs_tool
 %if %systemd
 %{_unitdir}/uncvmfs@.service
+%{_unitdir}/uncvmfs@.timer
 %else
 %{_bindir}/uncvmfs_cron
 %config(noreplace) %{_sysconfdir}/cron.d/uncvmfs.cron
@@ -107,12 +110,15 @@ exit 0
 %if %systemd
 %post
 %systemd_post uncvmfs@.service
+%systemd_post uncvmfs@.timer
 
 %preun
 %systemd_preun uncvmfs@.service
+%systemd_preun uncvmfs@.timer
 
 %postun
 %systemd_postun_with_restart uncvmfs@.service
+%systemd_postun_with_restart uncvmfs@.timer
 %endif
 
 %changelog
