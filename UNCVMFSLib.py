@@ -584,6 +584,11 @@ class CVMFSCatalog(object):
       elif stat.S_ISLNK(fmode):
         links.append((fname, fsymlink, fseen, fmd5path))
       elif stat.S_ISREG(fmode):
+        # Some repos can have the hash for some files missing
+        # I'm not sure what causes this, but we just have to
+        # skip these files for now.
+        if not res[3]:
+          continue
         # Get the file hash into a string value
         fhash = ''.join('%02x' % ord(byte) for byte in res[3])
         files.append((fname, fsize, fmode, fhash, fseen, fmd5path))

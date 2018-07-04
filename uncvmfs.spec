@@ -124,7 +124,8 @@ exit 0
 
 %changelog
 * Wed Aug 24 2016 Simon Fayer <sf105@ic.ac.uk> - 0.6-1
- - Nothing yet!
+ - Not released yet!
+ - Skip files with hash missing from catalog.
 
 * Wed Aug 24 2016 Simon Fayer <sf105@ic.ac.uk> - 0.5-1
  - Add LICENSE file.
