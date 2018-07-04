@@ -158,6 +158,7 @@ def do_deletes(cat_obj, path, dirs, files, links):
 
 def do_uncvmfs(conf, cat_only, no_update, num_threads):
   """ The main application logic. """
+  logging.info("Starting application.")
   _, data_path, _ = conf.get_paths()
   manager = CVMFSManager(conf)
   # Update the catalog
@@ -189,32 +190,70 @@ def do_uncvmfs(conf, cat_only, no_update, num_threads):
   pool.wait()
   complete_files(pool)
   pool.shutdown()
+  logging.info("Download finished.")
 
   squashfs_path = conf.get_squashfs_path()
+  squashfs_prefix = conf.get_squashfs_prefix()
+  while squashfs_prefix.endswith("/"):
+    squashfs_prefix = squashfs_prefix[:-1]
+  squashfs_data_path = data_path
+  if not squashfs_data_path.endswith(squashfs_prefix):
+    logging.critical("Data path (%s) must end with squashfs prefix (%s)", data_path, squashfs_prefix)
+    sys.exit(1)
+  if len(squashfs_prefix) > 0:
+    squashfs_data_path = squashfs_data_path[:-len(squashfs_prefix)]
+  squashfs_merge_list = conf.get_squashfs_merge()
   if squashfs_path:
     path_re = re.compile(r"[-,_./A-Za-z0-9]+")
-    if not path_re.match(data_path):
-      print "Refusing to write to unsanitized data path: %s" % data_path
+    if not path_re.match(squashfs_data_path):
+      logging.critical("Refusing to write to unsanitized data path: %s", squashfs_data_path)
       sys.exit(1)
     if not path_re.match(squashfs_path):
-      print "Refusing to write to unsanitized squashfs path: %s" % squashfs_path
+      logging.critical("Refusing to write to unsanitized squashfs path: %s", squashfs_path)
       sys.exit(1)
+    for path in squashfs_merge_list:
+      if not path_re.match(path):
+        logging.critical("Refusing to write to unsanitized squashfs merge path: %s", path)
+        sys.exit(1)
     squashfs_final = squashfs_path
     squashfs_path += ".new"
-    cmd = "mksquashfs %s %s" % (data_path, squashfs_path)
+    cmd = "mksquashfs %s %s" % (squashfs_data_path, squashfs_path)
     if not os.isatty(1):
       cmd += " -no-progress"
     blacklist = conf.get_blacklist()
     name = None
-    if blacklist:
+    if blacklist or squashfs_prefix:
       fd, name = tempfile.mkstemp()
       prefix_re = re.compile("(^/+)")
-      with os.fdopen(fd, "w") as fp:
-        fp.write("\n".join([prefix_re.sub("", i) for i in blacklist]))
-      cmd += " -wildcards -ef %s" % name
+      prefix = squashfs_prefix + "/"
+      while prefix.startswith("/"):
+        prefix = prefix[1:]
+      split_re = re.compile("/+")
+      prefix_subpaths = split_re.split(prefix)
+      exclude_files = []
+      for idx in range(len(prefix_subpaths)-1):
+        current_prefix = "/".join(prefix_subpaths[:idx])
+        contents = os.listdir(os.path.join(squashfs_data_path, current_prefix))
+        exclude_files += [os.path.join(current_prefix, i) for i in contents if i != prefix_subpaths[idx]]
+      if exclude_files or blacklist:
+        with os.fdopen(fd, "w") as fp:
+           all_files = exclude_files + [prefix_re.sub("", prefix + i) for i in blacklist]
+           logging.debug("Exclude files:\n%s","\n".join(all_files))
+           fp.write("\n".join(all_files))
+        cmd += " -wildcards -ef %s" % name
+    logging.info("Executing command %s", cmd)
     result = os.system(cmd)
+    logging.info("Commmand execution finished.")
     if name:
       os.unlink(name)
+    for squashfs_merge in squashfs_merge_list:
+      if not result:
+        cmd = "mksquashfs %s %s" % (squashfs_merge, squashfs_path)
+        if not os.isatty(1):
+          cmd += " -no-progress"
+          logging.info("Executing command %s", cmd)
+          result = os.system(cmd)
+          logging.info("Commmand execution finished.")
     if result:
       sys.exit(result)
     os.rename(squashfs_path, squashfs_final)
@@ -296,4 +335,3 @@ if __name__ == '__main__':
     main()
   except KeyboardInterrupt:
     sys.exit(0)
-
